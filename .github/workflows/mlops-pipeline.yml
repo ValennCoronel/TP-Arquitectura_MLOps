@@ -1,0 +1,130 @@
+name: MLOps Continuous Integration & Continuous Delivery
+
+on:
+  push:
+    branches: [ "main", "development" ]
+  pull_request:
+    branches: [ "main", "development" ]
+
+permissions:
+  contents: read
+  # En producción con AWS OIDC (OpenID Connect) se requiere id-token: write
+  # id-token: write
+
+env:
+  IMAGE_NAME: customer-churn-api
+  AWS_REGION: us-east-1
+
+jobs:
+  # =========================================================================
+  # JOB 1: CONTINUOUS INTEGRATION (CI)
+  # =========================================================================
+  ci:
+    name: Code Quality, Linting & Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar Dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ejecutar Linter (flake8)
+        run: |
+          # Detiene la ejecución si hay errores de sintaxis o violaciones de estilo
+          flake8 src tests
+
+      - name: Ejecutar Pruebas Automatizadas (pytest)
+        run: |
+          # En producción se pueden generar reportes de cobertura (pytest-cov)
+          pytest tests/ -v
+
+  # =========================================================================
+  # JOB 2: CONTINUOUS DELIVERY / CONTINUOUS DEPLOYMENT (CD)
+  # =========================================================================
+  cd:
+    name: Build Docker Image & Deploy to AWS
+    needs: [ci]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Construir Imagen Docker
+        run: |
+          echo "[+] Construyendo imagen Docker local: $IMAGE_NAME:${{ github.sha }}"
+          docker build -t $IMAGE_NAME:${{ github.sha }} -t $IMAGE_NAME:latest .
+
+      # =====================================================================
+      # BLOQUE PRODUCCIÓN: Autenticación, Push a ECR y Despliegue en AWS
+      # (Comentado para ejecución en entornos sin credenciales de AWS conectadas)
+      # =====================================================================
+
+      # 1. Autenticación Segura mediante OIDC (Elimina el uso de Access Keys permanentes)
+      # - name: Configurar Credenciales de AWS vía IAM Role OIDC
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: arn:aws:iam::123456789012:role/GitHubActionsMLOpsDeployerRole
+      #     aws-region: ${{ env.AWS_REGION }}
+
+      # 2. Login en Amazon Elastic Container Registry (ECR)
+      # - name: Iniciar Sesión en Amazon ECR
+      #   id: login-ecr
+      #   uses: aws-actions/amazon-ecr-login@v2
+
+      # 3. Tagging y Push de la Imagen hacia el Registro Privado
+      # - name: Push de la Imagen Docker a Amazon ECR
+      #   env:
+      #     ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      #     ECR_REPOSITORY: customer-churn-api
+      #     IMAGE_TAG: ${{ github.sha }}
+      #   run: |
+      #     docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      #     docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+      #     docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      #     docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      # 4. OPCIÓN A: Despliegue en Amazon EC2 (mediante AWS Systems Manager - SSM)
+      # - name: Desplegar Contenedor en EC2 vía AWS SSM Run Command
+      #   run: |
+      #     aws ssm send-command \
+      #       --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+      #       --document-name "AWS-RunShellScript" \
+      #       --comment "Actualizando contenedor de inferencia Customer Churn" \
+      #       --parameters commands=[
+      #         "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}",
+      #         "docker pull ${{ steps.login-ecr.outputs.registry }}/customer-churn-api:latest",
+      #         "docker stop churn-api || true",
+      #         "docker rm churn-api || true",
+      #         "docker run -d --name churn-api -p 80:8000 --restart always ${{ steps.login-ecr.outputs.registry }}/customer-churn-api:latest"
+      #       ]
+
+      # 4. OPCIÓN B: Despliegue en AWS App Runner (Serverless Container Platform)
+      # - name: Desplegar en AWS App Runner
+      #   run: |
+      #     aws apprunner start-deployment \
+      #       --service-arn "${{ secrets.APP_RUNNER_SERVICE_ARN }}"
+
+      # 4. OPCIÓN C: Despliegue en Amazon ECS (Fargate) con Rolling Update
+      # - name: Desplegar nueva versión en ECS Service
+      #   run: |
+      #     aws ecs update-service \
+      #       --cluster mlops-production-cluster \
+      #       --service churn-api-service \
+      #       --force-new-deployment
+
+      - name: Confirmación de Build de Entrega Continua
+        run: |
+          echo "[✓] Pipeline de CI/CD ejecutado exitosamente."
+          echo "[i] La imagen Docker está lista para ser distribuida a los ambientes de Staging/Producción."

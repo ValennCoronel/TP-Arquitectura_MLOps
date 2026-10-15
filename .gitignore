@@ -1,0 +1,38 @@
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# MLflow
+mlruns/
+mlartifacts/
+.trash/
+
+# Artifacts & Local models
+models/*.pkl
+models/*.joblib
+!models/.gitkeep
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments & IDEs
+.env
+.idea/
+.vscode/
+*.swp
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+terraform.tfvars
