@@ -99,13 +99,14 @@ arqMlOps/
 Si tienes Docker Desktop instalado, no necesitas instalar Python ni dependencias en tu máquina local:
 
 ```bash
-# 1. Levantar MLflow (puerto 5000) y la API FastAPI (puerto 8000)
+# 1. Levantar la API FastAPI (puerto 8000)
 docker compose up -d
 
-# 2. Ejecutar el entrenamiento de modelos (conecta directo a MLflow)
+# 2. (Opcional) Ejecutar reentrenamiento de modelos en contenedor hacia DagsHub MLflow
 docker compose run --rm train
 
-# 3. Ver resultados en MLflow: http://localhost:5000
+# 3. Ver experimentos y modelos en MLflow Web (DagsHub):
+#    https://dagshub.com/coronelvalentino/arquitectura-mlops.mlflow
 # 4. Probar inferencia en FastAPI Swagger: http://localhost:8000/docs
 ```
 
