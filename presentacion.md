@@ -48,9 +48,10 @@ Este documento es tu **guía paso a paso para presentar la arquitectura MLOps en
    - Entra al experimento `customer-churn-prediction`.
    - Selecciona las dos últimas corridas (`Logistic_Regression` y `Random_Forest`) y haz clic en **"Compare"**.
    - **Qué destacar al público:**
+     - En la tabla de corridas de MLflow, haz clic en **"Columns"** -> activa el tag **`mlops.role`** para mostrar en pantalla cómo MLflow identifica automáticamente quién es **`CHAMPION`**, quién es **`CHALLENGER`** y quién fue **`DISCARDED`**.
      - Muestra la gráfica de coordenadas paralelas / barras comparando el `F1-Score` y `ROC-AUC`.
      - Entra a los artefactos de la corrida ganadora y muestra cómo MLflow guardó automáticamente el binario `model.pkl`, el esquema de entrada (`input_example.json`) y las versiones exactas de las librerías (`requirements.txt`).
-     - Muestra la sección **Model Registry (`customer_churn_model`)** donde quedó registrada la nueva versión lista para gobernanza.
+     - Muestra la sección **Model Registry (`customer_churn_model`)** donde la versión en producción aparece en Stage **`Production` (`mlops.role = CHAMPION`)** y la versión en prueba en Stage **`Staging` (`mlops.role = CHALLENGER`)**.
 
 ---
 

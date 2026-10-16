@@ -30,7 +30,24 @@ def fetch_mlflow_champion_metrics(
         mlflow.set_tracking_uri(tracking_uri)
         client = MlflowClient()
 
-        # 1. Revisar si MLFLOW_MODEL_URI apunta a una versión o run específico en Producción
+        # 1. Buscar la versión con Stage='Production' o tag mlops.role='CHAMPION'
+        versions = client.search_model_versions("name='customer_churn_model'")
+        sorted_versions = sorted(versions, key=lambda v: int(v.version), reverse=True)
+
+        for mv in sorted_versions:
+            is_prod_stage = getattr(mv, "current_stage", "") == "Production"
+            tags = getattr(mv, "tags", {}) or {}
+            is_champ_tag = tags.get("mlops.role") == "CHAMPION"
+            if mv.run_id and mv.run_id != challenger_run_id and (is_prod_stage or is_champ_tag):
+                run = client.get_run(mv.run_id)
+                algo = run.data.tags.get("mlflow.runName", "ChampionModel")
+                return (
+                    f"Champion Producción ({algo})",
+                    f"v{mv.version} [Stage: Production] (`{mv.run_id[:8]}`)",
+                    dict(run.data.metrics),
+                )
+
+        # 2. Revisar si MLFLOW_MODEL_URI apunta a una versión o run específico en Producción
         prod_uri = os.getenv("MLFLOW_MODEL_URI", "")
         if prod_uri.startswith("models:/"):
             parts = prod_uri.replace("models:/", "").split("/")
@@ -46,9 +63,7 @@ def fetch_mlflow_champion_metrics(
                         dict(run.data.metrics),
                     )
 
-        # 2. Buscar versiones previas registradas en Model Registry
-        versions = client.search_model_versions("name='customer_churn_model'")
-        sorted_versions = sorted(versions, key=lambda v: int(v.version), reverse=True)
+        # 3. Fallback: buscar la versión registrada previa más reciente
         for mv in sorted_versions:
             if mv.run_id and mv.run_id != challenger_run_id:
                 run = client.get_run(mv.run_id)
@@ -83,6 +98,7 @@ def generate_comparison_report(
     challenger_run_id = summary["best_run_id"]
     challenger_metrics = summary["best_metrics"]
     challenger_version = summary.get("registered_version")
+    challenger_role = summary.get("mlops_role", "CHALLENGER")
     runs = summary.get("runs", {})
 
     # Intentar obtener el Champion desde MLflow remoto; si no, usar el otro modelo del benchmark
@@ -90,7 +106,7 @@ def generate_comparison_report(
 
     if remote_champion:
         champ_label, champ_id, champ_metrics = remote_champion
-        comparison_source = "MLflow Model Registry (DagsHub Producción)"
+        comparison_source = "MLflow Model Registry (Tag `mlops.role = CHAMPION` / `Production`)"
     else:
         # Usar el modelo alternativo entrenado (ej. Logistic_Regression) como Baseline de referencia
         baseline_candidates = [k for k in runs.keys() if k != challenger_name]
@@ -131,7 +147,7 @@ def generate_comparison_report(
             f"en **F1-Score** frente a **{champ_label}**. Revisar hiperparámetros antes del merge."
         )
 
-    challenger_id_str = f"`{challenger_run_id[:8]}`"
+    challenger_id_str = f"`{challenger_run_id[:8]}` [Tag: `{challenger_role}`]"
     if challenger_version:
         challenger_id_str = f"v{challenger_version} ({challenger_id_str})"
 
@@ -143,9 +159,9 @@ def generate_comparison_report(
         "",
         f"**Fuente de comparación:** {comparison_source}",
         "",
-        "### 📊 1. Comparación Directa (Producción/Referencia vs. Candidato PR)",
+        "### 📊 1. Comparación Directa (Champion en Producción vs. Challenger en PR)",
         "",
-        "| Métrica | 🏆 Referencia / Prod | 🚀 Challenger (PR) | Delta (Diferencia) | Estado |",
+        "| Métrica | 🏆 Champion / Ref | 🚀 Challenger (PR) | Delta (Diferencia) | Estado |",
         "| :--- | :---: | :---: | :---: | :---: |",
     ]
 
@@ -177,24 +193,26 @@ def generate_comparison_report(
             "",
             "### 🧪 2. Torneo de Algoritmos en esta Ejecución (MLflow Experiment)",
             "",
-            "| Algoritmo Evaluado | Run ID | F1-Score | ROC-AUC | Accuracy | Selección |",
-            "| :--- | :---: | :---: | :---: | :---: | :---: |",
+            "| Algoritmo Evaluado | Run ID | F1-Score | ROC-AUC | Tag `mlops.role` |",
+            "| :--- | :---: | :---: | :---: | :---: |",
         ]
     )
 
     for run_name, rdata in runs.items():
         rmetrics = rdata["metrics"]
         rid = rdata["run_id"][:8]
-        is_winner = "🏆 **Ganador**" if run_name == challenger_name else "Descartado"
+        default_role = "CHALLENGER" if run_name == challenger_name else "DISCARDED"
+        r_role = rdata.get("mlops_role", default_role)
+        role_badge = f"🚀 `{r_role}`" if r_role in ("CHALLENGER", "CHAMPION") else f"⚪ `{r_role}`"
         lines.append(
             f"| `{run_name}` | `{rid}` | `{rmetrics['f1_score']:.4f}` | "
-            f"`{rmetrics['roc_auc']:.4f}` | `{rmetrics['accuracy']:.4f}` | {is_winner} |"
+            f"`{rmetrics['roc_auc']:.4f}` | {role_badge} |"
         )
 
     lines.extend(
         [
             "",
-            "### 🔗 3. Metadatos de Gobernanza y Linaje",
+            "### 🔗 3. Metadatos de Gobernanza y Linaje en MLflow",
             f"- **Experimento MLflow:** `{summary['experiment_name']}`",
             f"- **Modelo Seleccionado (Challenger):** `{challenger_name}` ({challenger_id_str})",
             f"- **Modelo de Referencia (Champion):** `{champ_label}` ({champ_id})",
