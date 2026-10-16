@@ -114,33 +114,33 @@ def main():
     # Escenarios de prueba con datos representativos
     test_cases = [
         (
-            "Cliente 1: Riesgo Alto (Poca antigüedad, muchos reclamos, sin seguridad)",
+            "Cliente 1: Riesgo Alto (> 65% - Pocos meses, 6 reclamos)",
             {
                 "tenure_months": 2,
                 "monthly_charges": 89.9,
                 "total_charges": 179.8,
                 "num_support_tickets": 6,
+                "online_security": 1,
+            },
+        ),
+        (
+            "Cliente 2: Riesgo Bajo / Retención (< 35% -> ~22%)",
+            {
+                "tenure_months": 18,
+                "monthly_charges": 25.8,
+                "total_charges": 2489.36,
+                "num_support_tickets": 0,
                 "online_security": 0,
             },
         ),
         (
-            "Cliente 2: Riesgo Bajo / Cliente Fiel (Alta antigüedad, sin reclamos)",
+            "Cliente 3: Riesgo Bajo Extremo (< 10% -> ~5%)",
             {
-                "tenure_months": 48,
-                "monthly_charges": 45.0,
-                "total_charges": 2160.0,
+                "tenure_months": 8,
+                "monthly_charges": 65.36,
+                "total_charges": 2256.12,
                 "num_support_tickets": 0,
-                "online_security": 1,
-            },
-        ),
-        (
-            "Cliente 3: Caso Promedio / Moderado",
-            {
-                "tenure_months": 14,
-                "monthly_charges": 65.5,
-                "total_charges": 917.0,
-                "num_support_tickets": 2,
-                "online_security": 1,
+                "online_security": 0,
             },
         ),
     ]
