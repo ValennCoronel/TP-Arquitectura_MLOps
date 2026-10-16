@@ -123,12 +123,10 @@ def train_and_track():
                     ("classifier", LogisticRegression(C=1.0, max_iter=1000, random_state=42)),
                 ]
             ),
+            # Solo metadatos: los hiperparámetros se leen del modelo al registrar la corrida
             "params": {
                 "model_type": "LogisticRegression",
-                "C": 1.0,
-                "max_iter": 1000,
                 "scaler": "StandardScaler",
-                "class_weight": "none",
             },
         },
         "Random_Forest": {
@@ -145,11 +143,9 @@ def train_and_track():
                     ),
                 ]
             ),
+            # Solo metadatos: los hiperparámetros se leen del modelo al registrar la corrida
             "params": {
                 "model_type": "RandomForestClassifier",
-                "n_estimators": 100,
-                "max_depth": 5,
-                "min_samples_split": 6,
             },
         },
     }
@@ -167,15 +163,19 @@ def train_and_track():
             run_id = run.info.run_id
             print(f"\n[+] Entrenando modelo: {run_name} (Run ID: {run_id})")
 
-            # Registro de hiperparámetros y metadata de datos
-            mlflow.log_params(config["params"])
+            pipeline = config["pipeline"]
+
+            # Registro de hiperparámetros y metadata de datos.
+            # Los hiperparámetros se leen del propio modelo (último paso del pipeline),
+            # así lo registrado en MLflow siempre coincide con lo que se entrena.
+            run_params = {**config["params"], **pipeline[-1].get_params()}
+            mlflow.log_params(run_params)
             mlflow.log_param("train_samples", len(X_train))
             mlflow.log_param("test_samples", len(X_test))
             mlflow.set_tag("pipeline.environment", "poc")
             mlflow.set_tag("algorithm.family", config["params"]["model_type"])
 
             # Entrenamiento
-            pipeline = config["pipeline"]
             pipeline.fit(X_train, y_train)
 
             # Evaluación
@@ -184,7 +184,7 @@ def train_and_track():
 
             all_runs_summary[run_name] = {
                 "run_id": run_id,
-                "params": config["params"],
+                "params": run_params,
                 "metrics": metrics,
             }
 
