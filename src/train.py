@@ -125,16 +125,16 @@ def train_and_track():
                         "classifier",
                         LogisticRegression(C=1.0, max_iter=1000, random_state=42),
                     ),
-                    # Nuevos hiperparámetros para prueba:
-                    #(
-                    #    "classifier",
-                    #    LogisticRegression(
-                    #        C=0.5,
-                    #        class_weight="balanced",
-                    #        max_iter=1000,
-                    #        random_state=42,
-                    #    ),
-                    #),
+                    # Nuevos hiperparámetros para prueba (comentados):
+                    # (
+                    #     "classifier",
+                    #     LogisticRegression(
+                    #         C=0.5,
+                    #         class_weight="balanced",
+                    #         max_iter=1000,
+                    #         random_state=42,
+                    #     ),
+                    # ),
                 ]
             ),
             # Solo metadatos: los hiperparámetros se leen del modelo al registrar la corrida
@@ -148,22 +148,22 @@ def train_and_track():
                 [
                     (
                         "classifier",
-                        #Hiperparámetros originales:
+                        # Hiperparámetros originales:
                         RandomForestClassifier(
                             n_estimators=120,
                             max_depth=6,
                             min_samples_split=5,
                             random_state=42,
                         ),
-                        # Nuevos hiperparámetros para prueba:
-                        #RandomForestClassifier(
-                        #    n_estimators=200,
-                        #    max_depth=10,
-                        #    min_samples_split=2,
-                        #    min_samples_leaf=2,
-                        #    criterion="entropy",
-                        #    random_state=42,
-                        #),
+                        # Nuevos hiperparámetros para prueba (comentados):
+                        # RandomForestClassifier(
+                        #     n_estimators=200,
+                        #     max_depth=10,
+                        #     min_samples_split=2,
+                        #     min_samples_leaf=2,
+                        #     criterion="entropy",
+                        #     random_state=42,
+                        # ),
                     ),
                 ]
             ),
