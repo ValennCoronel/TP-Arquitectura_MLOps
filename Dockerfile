@@ -35,8 +35,8 @@ COPY src/ ./src/
 COPY models/ ./models/
 
 # Crear y ajustar permisos para directorios de trabajo y almacenamiento
-RUN mkdir -p /mlflow /app/models && \
-    chown -R appuser:appuser /app /mlflow
+RUN mkdir -p /app/models && \
+    chown -R appuser:appuser /app
 
 # Cambiar al usuario seguro
 USER appuser
