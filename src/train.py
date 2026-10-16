@@ -147,9 +147,9 @@ def train_and_track():
             ),
             "params": {
                 "model_type": "RandomForestClassifier",
-                "n_estimators": 120,
-                "max_depth": 6,
-                "min_samples_split": 5,
+                "n_estimators": 100,
+                "max_depth": 5,
+                "min_samples_split": 6,
             },
         },
     }
@@ -244,32 +244,65 @@ def train_and_track():
             registered_version = str(registered_model.version)
             reg_uri = f"models:/customer_churn_model/{registered_version}"
 
-            # Si es la primera versión (v1) o estamos en el job de despliegue a main
-            is_champion = (registered_version == "1") or promote_env
+            prev_versions = client.search_model_versions("name='customer_churn_model'")
+            other_versions = [
+                pv for pv in prev_versions if str(pv.version) != registered_version
+            ]
+
+            # Verificar si ya existe algún CHAMPION previo en el Registry
+            existing_champions = [
+                pv
+                for pv in other_versions
+                if getattr(pv, "current_stage", "") == "Production"
+                or (getattr(pv, "tags", {}) or {}).get("mlops.role") == "CHAMPION"
+            ]
+
+            # Si hay versiones previas pero ninguna tenía el tag CHAMPION aún,
+            # promovemos la versión previa más reciente como CHAMPION de referencia
+            if other_versions and not existing_champions and not promote_env:
+                latest_prev = max(other_versions, key=lambda v: int(v.version))
+                client.set_model_version_tag(
+                    "customer_churn_model", str(latest_prev.version), "mlops.role", "CHAMPION"
+                )
+                if latest_prev.run_id:
+                    client.set_tag(latest_prev.run_id, "mlops.role", "CHAMPION")
+                try:
+                    client.transition_model_version_stage(
+                        name="customer_churn_model",
+                        version=str(latest_prev.version),
+                        stage="Production",
+                    )
+                except Exception:
+                    pass
+                existing_champions = [latest_prev]
+
+            # Es CHAMPION si es la única versión (v1) o si estamos desplegando a main
+            is_champion = (not other_versions) or promote_env
             assigned_role = "CHAMPION" if is_champion else "CHALLENGER"
             target_stage = "Production" if is_champion else "Staging"
 
-            if is_champion:
+            if is_champion and existing_champions:
                 # Archivar versiones previas que fueran CHAMPION
-                prev_versions = client.search_model_versions("name='customer_churn_model'")
-                for pv in prev_versions:
-                    if str(pv.version) != registered_version and pv.current_stage == "Production":
-                        client.set_model_version_tag(
-                            "customer_churn_model", str(pv.version), "mlops.role", "ARCHIVED"
-                        )
-                        if pv.run_id:
-                            client.set_tag(pv.run_id, "mlops.role", "ARCHIVED_CHAMPION")
+                for pv in existing_champions:
+                    client.set_model_version_tag(
+                        "customer_churn_model", str(pv.version), "mlops.role", "ARCHIVED_CHAMPION"
+                    )
+                    if pv.run_id:
+                        client.set_tag(pv.run_id, "mlops.role", "ARCHIVED_CHAMPION")
 
             # Etiquetar la versión en el Model Registry y transicionar su Stage
             client.set_model_version_tag(
                 "customer_churn_model", registered_version, "mlops.role", assigned_role
             )
-            client.transition_model_version_stage(
-                name="customer_churn_model",
-                version=registered_version,
-                stage=target_stage,
-                archive_existing_versions=is_champion,
-            )
+            try:
+                client.transition_model_version_stage(
+                    name="customer_churn_model",
+                    version=registered_version,
+                    stage=target_stage,
+                    archive_existing_versions=is_champion,
+                )
+            except Exception:
+                pass
 
             print("[✓] Modelo registrado y etiquetado exitosamente en el Registry!")
             print("    - Nombre: 'customer_churn_model'")
