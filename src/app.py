@@ -8,10 +8,14 @@ integrándose con el modelo entrenado y registrado vía MLflow.
 import os
 import time
 from typing import Literal, Optional
+from dotenv import load_dotenv
 import joblib
 import pandas as pd
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
+
+# Cargar automáticamente variables de entorno desde el archivo .env si existe
+load_dotenv()
 
 # =========================================================================
 # CONFIGURACIÓN Y CARGA DEL MODELO
@@ -63,7 +67,7 @@ def load_model():
             }
             return
         except Exception as e:
-            print(f"[!] Advertencia: Fallo al cargar desde MLFLOW_MODEL_URI ({e}). Intentando local.")
+            print(f"[!] Advertencia: Fallo al cargar MLFLOW_MODEL_URI ({e}). Intentando local.")
 
     # Opción 2: Carga desde archivo local preempaquetado o montado por volumen
     if os.path.exists(MODEL_PATH):
@@ -143,7 +147,6 @@ class HealthResponse(BaseModel):
     run_id: Optional[str] = None
 
 
-
 # =========================================================================
 # ENDPOINTS DE LA API
 # =========================================================================
@@ -167,6 +170,24 @@ def health_check():
 
 
 @app.post(
+    "/reload-model",
+    response_model=HealthResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Recarga en caliente del artefacto del modelo",
+)
+def reload_model_endpoint():
+    """Permite recargar el modelo desde disco o MLflow sin reiniciar el contenedor."""
+    load_model()
+    is_ready = model_bundle is not None
+    return HealthResponse(
+        status="reloaded" if is_ready else "error_not_found",
+        model_loaded=is_ready,
+        model_name=model_bundle.get("model_name") if is_ready else None,
+        run_id=model_bundle.get("run_id") if is_ready else None,
+    )
+
+
+@app.post(
     "/predict",
     response_model=PredictionResponse,
     status_code=status.HTTP_200_OK,
@@ -176,10 +197,14 @@ def predict_churn(customer: CustomerFeatures):
     """
     Recibe los atributos de un cliente y retorna la probabilidad de fuga estimada.
     """
+    global model_bundle
+    if model_bundle is None:
+        load_model()
+
     if model_bundle is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="El modelo predictivo no se encuentra cargado en el servicio.",
+            detail="El modelo no se encuentra cargado. Ejecute el entrenamiento primero.",
         )
 
     start_time = time.perf_counter()

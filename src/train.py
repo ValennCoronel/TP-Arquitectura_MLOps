@@ -8,7 +8,9 @@ hiperparámetros, métricas y artefactos en MLflow.
 """
 
 import os
+import json
 import joblib
+from dotenv import load_dotenv
 import numpy as np
 import pandas as pd
 import mlflow
@@ -21,6 +23,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+# Cargar automáticamente variables de entorno desde el archivo .env si existe
+load_dotenv()
+
 
 def generate_churn_dataset(n_samples: int = 2500, random_state: int = 42) -> pd.DataFrame:
     """
@@ -28,7 +33,7 @@ def generate_churn_dataset(n_samples: int = 2500, random_state: int = 42) -> pd.
 
     En un entorno productivo real:
     - Esta función sería reemplazada por una conexión a un Feature Store (ej. Feast, Hopsworks,
-      AWS SageMaker Feature Store) o un Data Warehouse (ej. Snowflake, Google BigQuery, AWS Redshift).
+      AWS SageMaker Feature Store) o un Data Warehouse (Snowflake, BigQuery, Redshift).
     - Los datos de clientes vendrían enriquecidos con agregaciones de streaming (ej. Kafka/Flink)
       y tablas batch históricas.
     """
@@ -77,14 +82,14 @@ def train_and_track():
     Pipeline principal de orquestación de experimentos con MLflow.
     """
     # =========================================================================
-    # PRODUCCIÓN: Configuración de Tracking Server Remoto
+    # CONFIGURACIÓN DE TRACKING SERVER (Local o Docker Compose / Remoto)
     # =========================================================================
-    # En producción real:
-    # 1. Definir URI del servidor central (ej. desplegado en ECS con backend PostgreSQL en RDS):
-    #    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.internal:5000"))
-    # 2. Los artefactos se almacenan directamente en S3:
-    #    os.environ["MLFLOW_S3_ENDPOINT_URL"] = ... o permisos IAM vía IAM Roles for Service Accounts.
-    # Para esta PoC, se utiliza el almacenamiento local predeterminado (./mlruns).
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+    if tracking_uri:
+        mlflow.set_tracking_uri(tracking_uri)
+        print(f"[*] MLflow Tracking Server configurado en: {tracking_uri}")
+    else:
+        print("[*] MLflow utilizando almacenamiento local predeterminado (./mlruns)")
 
     experiment_name = "customer-churn-prediction"
     mlflow.set_experiment(experiment_name)
@@ -152,6 +157,8 @@ def train_and_track():
     best_f1_score = -1.0
     best_pipeline = None
     best_run_id = None
+    best_metrics = {}
+    all_runs_summary = {}
 
     # 2. Entrenamiento iterativo y tracking
     for run_name, config in models_to_evaluate.items():
@@ -174,6 +181,12 @@ def train_and_track():
             metrics = evaluate_model(pipeline, X_test, y_test)
             mlflow.log_metrics(metrics)
 
+            all_runs_summary[run_name] = {
+                "run_id": run_id,
+                "params": config["params"],
+                "metrics": metrics,
+            }
+
             print(
                 f"    Métricas -> Accuracy: {metrics['accuracy']:.4f} | "
                 f"F1-Score: {metrics['f1_score']:.4f} | "
@@ -194,24 +207,36 @@ def train_and_track():
                 best_model_name = run_name
                 best_pipeline = pipeline
                 best_run_id = run_id
+                best_metrics = metrics
 
     print("\n" + "=" * 60)
     print(f"[!] MODELO CAMPEÓN SELECCIONADO: {best_model_name}")
     print(f"[!] Mejor F1-Score: {best_f1_score:.4f} | Run ID: {best_run_id}")
     print("=" * 60)
 
-    # 3. Exportación de artefacto para Serving
-    # =========================================================================
-    # PRODUCCIÓN: MLflow Model Registry
-    # =========================================================================
-    # En producción con MLflow Model Registry:
-    #   model_uri = f"runs:/{best_run_id}/model"
-    #   mlflow.register_model(model_uri, "customer-churn-production")
-    #   client = mlflow.tracking.MlflowClient()
-    #   client.set_registered_model_alias("customer-churn-production", "champion", version)
-    #
-    # Para garantizar que el Docker de FastAPI funcione de inmediato sin dependencias
-    # de red externas en la PoC, serializamos el pipeline ganador en 'models/best_model.pkl'.
+    # 3. Model URI y Registro en MLflow Model Registry (DagsHub / Servidor Central)
+    model_uri = f"runs:/{best_run_id}/model"
+    print(f"\n[*] Model URI del ganador: {model_uri}")
+
+    registered_version = None
+    # Si hay un servidor de tracking configurado (ej. DagsHub), registramos en el Model Registry
+    if tracking_uri and not tracking_uri.startswith("file:"):
+        try:
+            print("[*] Registrando modelo en el Model Registry de MLflow...")
+            registered_model = mlflow.register_model(
+                model_uri=model_uri,
+                name="customer_churn_model"
+            )
+            registered_version = str(registered_model.version)
+            reg_uri = f"models:/customer_churn_model/{registered_version}"
+            print("[✓] Modelo registrado exitosamente en el Registry!")
+            print("    - Nombre: 'customer_churn_model'")
+            print(f"    - Versión: {registered_version}")
+            print(f"    - Registry URI para Serving: '{reg_uri}'")
+        except Exception as err:
+            print(f"[!] Nota sobre Model Registry: {err}")
+
+    # 4. Exportación local para serving offline, Docker y comparación en PR
     os.makedirs("models", exist_ok=True)
     export_path = os.path.join("models", "best_model.pkl")
     joblib.dump(
@@ -221,11 +246,28 @@ def train_and_track():
             "run_id": best_run_id,
             "model_name": best_model_name,
             "f1_score": best_f1_score,
+            "metrics": best_metrics,
         },
         export_path,
     )
-    print(f"[✓] Artefacto exportado exitosamente para el servicio API en: '{export_path}'")
-    print("[✓] Ejecución de MLflow completada. Ejecuta 'mlflow ui' para explorar la interfaz gráfica.")
+
+    summary_path = os.path.join("models", "training_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "experiment_name": experiment_name,
+                "best_model_name": best_model_name,
+                "best_run_id": best_run_id,
+                "registered_version": registered_version,
+                "best_metrics": best_metrics,
+                "runs": all_runs_summary,
+            },
+            f,
+            indent=2,
+        )
+
+    print(f"[✓] Artefacto exportado localmente en: '{export_path}'")
+    print("[✓] Pipeline de entrenamiento finalizado exitosamente.")
 
 
 if __name__ == "__main__":

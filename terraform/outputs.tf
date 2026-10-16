@@ -22,3 +22,13 @@ output "ec2_instance_id" {
   description = "ID de la instancia EC2 para integración en pipelines de CI/CD (SSM)"
   value       = aws_instance.api_server.id
 }
+
+output "ecr_repository_url" {
+  description = "URL del repositorio Amazon ECR para push de imagenes Docker"
+  value       = aws_ecr_repository.api_repo.repository_url
+}
+
+output "ecr_repository_name" {
+  description = "Nombre del repositorio ECR"
+  value       = aws_ecr_repository.api_repo.name
+}

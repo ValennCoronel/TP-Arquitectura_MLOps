@@ -5,7 +5,7 @@
 # 1. Bucket S3 con versionado y cifrado para almacenamiento de artefactos de MLflow.
 # 2. Security Group con reglas mínimas para HTTP y acceso a la API FastAPI.
 # 3. Rol IAM e Instance Profile para acceso seguro a S3 y ECR sin hardcodear claves.
-# 4. Instancia EC2 t2.micro (Free Tier) con Docker preinstalado vía User Data.
+# 4. Instancia EC2 t3.micro (Free Tier) con Docker preinstalado vía User Data.
 # =========================================================================
 
 terraform {
@@ -155,6 +155,12 @@ resource "aws_iam_role_policy_attachment" "attach_s3_policy" {
   policy_arn = aws_iam_policy.s3_read_models_policy.arn
 }
 
+# Permisos para que EC2 pueda descargar imágenes desde Amazon ECR sin credenciales estáticas
+resource "aws_iam_role_policy_attachment" "attach_ecr_policy" {
+  role       = aws_iam_role.ec2_mlops_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
 # Permisos para AWS Systems Manager (SSM) para administración y despliegues sin abrir SSH
 resource "aws_iam_role_policy_attachment" "attach_ssm_policy" {
   role       = aws_iam_role.ec2_mlops_role.name
@@ -164,6 +170,46 @@ resource "aws_iam_role_policy_attachment" "attach_ssm_policy" {
 resource "aws_iam_instance_profile" "ec2_profile" {
   name = "${var.project_name}-ec2-instance-profile"
   role = aws_iam_role.ec2_mlops_role.name
+}
+
+# =========================================================================
+# 3. REGISTRO PRIVADO DE CONTENEDORES (Amazon ECR - Free Tier: 500MB/mes)
+# =========================================================================
+resource "aws_ecr_repository" "api_repo" {
+  name                 = "${var.project_name}-api"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Name = "${var.project_name}-ecr"
+  }
+}
+
+# Política de ciclo de vida para retener solo las últimas 3 imágenes y no exceder la capa gratuita
+resource "aws_ecr_lifecycle_policy" "api_repo_lifecycle" {
+  repository = aws_ecr_repository.api_repo.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Mantener solo las ultimas 3 imagenes para conservar la capa gratuita"
+        selection = {
+          tagStatus   = "any"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 14
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
 }
 
 # =========================================================================
@@ -262,6 +308,9 @@ resource "aws_instance" "api_server" {
               curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
               unzip -q awscliv2.zip
               ./aws/install
+
+              # Asegurar que el agente SSM este activo para CI/CD sin SSH
+              systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || snap start amazon-ssm-agent 2>/dev/null || true
 
               echo "[MLOps Init] Servidor listo para hospedar contenedores de inferencia." > /var/log/mlops_init.log
               EOF

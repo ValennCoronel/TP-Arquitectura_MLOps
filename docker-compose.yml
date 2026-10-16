@@ -1,0 +1,99 @@
+# =========================================================================
+# DOCKER COMPOSE - ENTORNO DE DESARROLLO LOCAL MLOPS
+# =========================================================================
+# Servicios:
+# 1. mlflow: Tracking Server UI (puerto 5000) con SQLite y artefactos persistentes.
+# 2. api: Microservicio FastAPI (puerto 8000) con Live Reload y montaje de modelos.
+# 3. train: Servicio utilitario on-demand para entrenar dentro de contenedor.
+# =========================================================================
+
+version: "3.8"
+
+services:
+  # -----------------------------------------------------------------------
+  # SERVICIO 1: MLflow Tracking Server (Interfaz Web y Registro de Experimentos)
+  # -----------------------------------------------------------------------
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mlops-mlflow
+    restart: unless-stopped
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlflow_data:/mlflow
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - mlops-network
+
+  # -----------------------------------------------------------------------
+  # SERVICIO 2: FastAPI Inferencia (Serving) con Hot Reload
+  # -----------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mlops-fastapi
+    restart: unless-stopped
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - MODEL_PATH=/app/models/best_model.pkl
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      # Montaje de código para Live-Reload inmediato al modificar src/
+      - ./src:/app/src
+      # Montaje compartido de modelos: si se ejecuta train, la API lo detecta
+      - ./models:/app/models
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - mlops-network
+
+  # -----------------------------------------------------------------------
+  # SERVICIO 3: Entrenador Utilitario (Ejecución bajo demanda)
+  # Uso: docker compose run --rm train
+  # -----------------------------------------------------------------------
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mlops-trainer
+    profiles: ["tools"]
+    command: python -m src.train
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./src:/app/src
+      - ./models:/app/models
+      - ./mlflow_data:/mlflow
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops-network
+
+networks:
+  mlops-network:
+    driver: bridge

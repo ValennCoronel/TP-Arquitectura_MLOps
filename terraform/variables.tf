@@ -17,9 +17,9 @@ variable "environment" {
 }
 
 variable "instance_type" {
-  description = "Tipo de instancia EC2 (t2.micro elegible para capa gratuita de AWS)"
+  description = "Tipo de instancia EC2 (t3.micro elegible para capa gratuita de AWS)"
   type        = string
-  default     = "t2.micro"
+  default     = "t3.micro"
 }
 
 variable "ssh_allowed_cidr" {

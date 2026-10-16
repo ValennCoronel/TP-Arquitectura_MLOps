@@ -34,8 +34,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY src/ ./src/
 COPY models/ ./models/
 
-# Ajustar permisos para el usuario no-root
-RUN chown -R appuser:appuser /app
+# Crear y ajustar permisos para directorios de trabajo y almacenamiento
+RUN mkdir -p /mlflow /app/models && \
+    chown -R appuser:appuser /app /mlflow
 
 # Cambiar al usuario seguro
 USER appuser

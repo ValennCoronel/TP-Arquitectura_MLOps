@@ -12,6 +12,7 @@ venv/
 tests/
 mlruns/
 mlartifacts/
+mlflow_data/
 terraform/
 *.md
 .flake8

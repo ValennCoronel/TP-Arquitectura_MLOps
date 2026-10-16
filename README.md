@@ -87,13 +87,31 @@ arqMlOps/
 ├── .flake8                      # Reglas de estilo y calidad de código
 ├── .gitignore                   # Exclusión de artefactos pesados y secretos
 ├── Dockerfile                   # Imagen Docker de producción optimizada y segura
+├── docker-compose.yml           # Entorno de desarrollo local (MLflow + FastAPI + Train)
 ├── README.md                    # Documentación técnica completa
 └── requirements.txt             # Dependencias del proyecto fijadas
 ```
 
 ---
 
-## 🛠️ Guía Rápida de Ejecución
+## ⚡ Inicio Rápido con Docker Compose (Recomendado para Devs)
+
+Si tienes Docker Desktop instalado, no necesitas instalar Python ni dependencias en tu máquina local:
+
+```bash
+# 1. Levantar MLflow (puerto 5000) y la API FastAPI (puerto 8000)
+docker compose up -d
+
+# 2. Ejecutar el entrenamiento de modelos (conecta directo a MLflow)
+docker compose run --rm train
+
+# 3. Ver resultados en MLflow: http://localhost:5000
+# 4. Probar inferencia en FastAPI Swagger: http://localhost:8000/docs
+```
+
+---
+
+## 🛠️ Guía Rápida de Ejecución Local (Alternativa sin Docker)
 
 ### 1. Preparar Entorno Local
 

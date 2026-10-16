@@ -4,23 +4,27 @@ on:
   push:
     branches: [ "main", "development" ]
   pull_request:
-    branches: [ "main", "development" ]
+    branches: [ "main" ]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  # En producción con AWS OIDC (OpenID Connect) se requiere id-token: write
-  # id-token: write
+  pull-requests: write
+  issues: write
 
 env:
-  IMAGE_NAME: customer-churn-api
   AWS_REGION: us-east-1
+  ECR_REPOSITORY: mlops-churn-poc-api
+  CONTAINER_NAME: churn-api
+  EC2_TAG_NAME: mlops-churn-poc-api-server
 
 jobs:
   # =========================================================================
-  # JOB 1: CONTINUOUS INTEGRATION (CI)
+  # JOB 1: CONTINUOUS INTEGRATION (CI) + MODEL EVALUATION GATE
+  # Se ejecuta al hacer push a development, a main, y en Pull Requests a main
   # =========================================================================
   ci:
-    name: Code Quality, Linting & Unit Tests
+    name: Code Quality, Unit Tests & Champion vs Challenger Gate
     runs-on: ubuntu-latest
 
     steps:
@@ -40,91 +44,137 @@ jobs:
 
       - name: Ejecutar Linter (flake8)
         run: |
-          # Detiene la ejecución si hay errores de sintaxis o violaciones de estilo
+          # Falla si hay errores de sintaxis, variables no usadas o infracciones PEP8
           flake8 src tests
 
       - name: Ejecutar Pruebas Automatizadas (pytest)
         run: |
-          # En producción se pueden generar reportes de cobertura (pytest-cov)
           pytest tests/ -v
 
+      - name: Evaluar Challenger vs. Champion (MLflow / Producción)
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+          MLFLOW_MODEL_URI: ${{ secrets.MLFLOW_MODEL_URI }}
+        run: |
+          python -m src.train
+          python -m src.compare_models
+          cat model_comparison_report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Publicar Reporte Comparativo de Modelos en el Pull Request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('model_comparison_report.md', 'utf8');
+            const marker = '<!-- mlops-model-comparison -->';
+            const body = `${marker}\n${report}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+
   # =========================================================================
-  # JOB 2: CONTINUOUS DELIVERY / CONTINUOUS DEPLOYMENT (CD)
+  # JOB 2: CONTINUOUS DEPLOYMENT (CD)
+  # Se ejecuta al hacer merge (push) a 'main' o manualmente via workflow_dispatch
   # =========================================================================
   cd:
-    name: Build Docker Image & Deploy to AWS
+    name: Build & Deploy to AWS Free Tier (ECR + EC2)
     needs: [ci]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout del Repositorio
         uses: actions/checkout@v4
 
-      - name: Construir Imagen Docker
+      - name: Configurar Credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || env.AWS_REGION }}
+
+      - name: Iniciar Sesión en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Construir y Publicar Imagen Docker en Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "[+] Construyendo imagen Docker local: $IMAGE_NAME:${{ github.sha }}"
-          docker build -t $IMAGE_NAME:${{ github.sha }} -t $IMAGE_NAME:latest .
+          echo "[+] Construyendo imagen: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          
+          echo "[+] Subiendo tags a Amazon ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      # =====================================================================
-      # BLOQUE PRODUCCIÓN: Autenticación, Push a ECR y Despliegue en AWS
-      # (Comentado para ejecución en entornos sin credenciales de AWS conectadas)
-      # =====================================================================
-
-      # 1. Autenticación Segura mediante OIDC (Elimina el uso de Access Keys permanentes)
-      # - name: Configurar Credenciales de AWS vía IAM Role OIDC
-      #   uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     role-to-assume: arn:aws:iam::123456789012:role/GitHubActionsMLOpsDeployerRole
-      #     aws-region: ${{ env.AWS_REGION }}
-
-      # 2. Login en Amazon Elastic Container Registry (ECR)
-      # - name: Iniciar Sesión en Amazon ECR
-      #   id: login-ecr
-      #   uses: aws-actions/amazon-ecr-login@v2
-
-      # 3. Tagging y Push de la Imagen hacia el Registro Privado
-      # - name: Push de la Imagen Docker a Amazon ECR
-      #   env:
-      #     ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-      #     ECR_REPOSITORY: customer-churn-api
-      #     IMAGE_TAG: ${{ github.sha }}
-      #   run: |
-      #     docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-      #     docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
-      #     docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-      #     docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-      # 4. OPCIÓN A: Despliegue en Amazon EC2 (mediante AWS Systems Manager - SSM)
-      # - name: Desplegar Contenedor en EC2 vía AWS SSM Run Command
-      #   run: |
-      #     aws ssm send-command \
-      #       --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
-      #       --document-name "AWS-RunShellScript" \
-      #       --comment "Actualizando contenedor de inferencia Customer Churn" \
-      #       --parameters commands=[
-      #         "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}",
-      #         "docker pull ${{ steps.login-ecr.outputs.registry }}/customer-churn-api:latest",
-      #         "docker stop churn-api || true",
-      #         "docker rm churn-api || true",
-      #         "docker run -d --name churn-api -p 80:8000 --restart always ${{ steps.login-ecr.outputs.registry }}/customer-churn-api:latest"
-      #       ]
-
-      # 4. OPCIÓN B: Despliegue en AWS App Runner (Serverless Container Platform)
-      # - name: Desplegar en AWS App Runner
-      #   run: |
-      #     aws apprunner start-deployment \
-      #       --service-arn "${{ secrets.APP_RUNNER_SERVICE_ARN }}"
-
-      # 4. OPCIÓN C: Despliegue en Amazon ECS (Fargate) con Rolling Update
-      # - name: Desplegar nueva versión en ECS Service
-      #   run: |
-      #     aws ecs update-service \
-      #       --cluster mlops-production-cluster \
-      #       --service churn-api-service \
-      #       --force-new-deployment
-
-      - name: Confirmación de Build de Entrega Continua
+      - name: Descubrir Instancia EC2 Activa y Desplegar vía AWS SSM
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          echo "[✓] Pipeline de CI/CD ejecutado exitosamente."
-          echo "[i] La imagen Docker está lista para ser distribuida a los ambientes de Staging/Producción."
+          echo "[*] Buscando instancia EC2 en ejecucion con tag Name=$EC2_TAG_NAME..."
+          TARGET_INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$EC2_TAG_NAME" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)
+
+          if [ -z "$TARGET_INSTANCE_ID" ] || [ "$TARGET_INSTANCE_ID" = "None" ]; then
+            echo "[!] No se encontro por tag, usando fallback secrets.EC2_INSTANCE_ID..."
+            TARGET_INSTANCE_ID="${{ secrets.EC2_INSTANCE_ID }}"
+          fi
+
+          if [ -z "$TARGET_INSTANCE_ID" ] || [ "$TARGET_INSTANCE_ID" = "None" ]; then
+            echo "[X] Error: No se encontro ninguna instancia EC2 activa para desplegar."
+            exit 1
+          fi
+
+          echo "[+] Desplegando en la instancia EC2: $TARGET_INSTANCE_ID"
+          
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$TARGET_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Despliegue automatico Churn API - Commit ${{ github.sha }}" \
+            --parameters commands="[
+              \"aws ecr get-login-password --region ${{ secrets.AWS_REGION || env.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY\",
+              \"docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest\",
+              \"docker stop $CONTAINER_NAME || true\",
+              \"docker rm $CONTAINER_NAME || true\",
+              \"docker run -d --name $CONTAINER_NAME -p 80:8000 -p 8000:8000 --restart always -e MLFLOW_TRACKING_URI='${{ secrets.MLFLOW_TRACKING_URI }}' -e MLFLOW_TRACKING_USERNAME='${{ secrets.MLFLOW_TRACKING_USERNAME }}' -e MLFLOW_TRACKING_PASSWORD='${{ secrets.MLFLOW_TRACKING_PASSWORD }}' -e MLFLOW_MODEL_URI='${{ secrets.MLFLOW_MODEL_URI }}' $ECR_REGISTRY/$ECR_REPOSITORY:latest\",
+              \"docker system prune -f\"
+            ]" \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "[✓] Orden de despliegue SSM emitida con CommandId: $COMMAND_ID"
+          echo "[*] Verificando resultado de la ejecucion en EC2..."
+          
+          # Esperar hasta 90 segundos para confirmar que el contenedor levantó
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$TARGET_INSTANCE_ID" || true
+            
+          echo "[✓] Proceso de despliegue finalizado exitosamente."

@@ -12,11 +12,14 @@ ENV/
 # MLflow
 mlruns/
 mlartifacts/
+mlflow_data/
 .trash/
 
 # Artifacts & Local models
 models/*.pkl
 models/*.joblib
+models/training_summary.json
+model_comparison_report.md
 !models/.gitkeep
 
 # Testing & Coverage
