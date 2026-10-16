@@ -63,6 +63,14 @@ jobs:
           python -m src.compare_models
           cat model_comparison_report.md >> $GITHUB_STEP_SUMMARY
 
+      - name: Subir artefactos de modelos entrenados (CI)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-models
+          path: models/
+          retention-days: 1
+
       - name: Publicar Reporte Comparativo de Modelos en el Pull Request
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -110,12 +118,43 @@ jobs:
       - name: Checkout del Repositorio
         uses: actions/checkout@v4
 
+      - name: Descargar artefactos de modelos entrenados en CI
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models
+          path: models/
+
       - name: Configurar Credenciales de AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION || env.AWS_REGION }}
+
+      - name: Subir y Reemplazar Artefactos del Modelo en Amazon S3
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "[*] Descubriendo Bucket S3 para artefactos de modelos..."
+          S3_BUCKET=$(aws s3api list-buckets \
+            --query "Buckets[?starts_with(Name, 'mlops-churn-poc-mlflow-artifacts')].Name | [0]" \
+            --output text)
+
+          if [ -z "$S3_BUCKET" ] || [ "$S3_BUCKET" = "None" ]; then
+            echo "[!] Advertencia: No se encontro ningun bucket S3 que coincida con 'mlops-churn-poc-mlflow-artifacts-*'."
+          else
+            echo "[+] Subiendo modelo a s3://$S3_BUCKET/models/ ..."
+            # Subir copia versionada por commit SHA
+            aws s3 cp models/best_model.pkl "s3://$S3_BUCKET/models/$IMAGE_TAG/best_model.pkl"
+            # Subir y reemplazar la copia de produccion 'latest'
+            aws s3 cp models/best_model.pkl "s3://$S3_BUCKET/models/latest/best_model.pkl"
+
+            if [ -f "models/training_summary.json" ]; then
+              aws s3 cp models/training_summary.json "s3://$S3_BUCKET/models/$IMAGE_TAG/training_summary.json"
+              aws s3 cp models/training_summary.json "s3://$S3_BUCKET/models/latest/training_summary.json"
+            fi
+            echo "[✓] Artefactos subidos y actualizados exitosamente en Amazon S3."
+          fi
 
       - name: Iniciar Sesión en Amazon ECR
         id: login-ecr
