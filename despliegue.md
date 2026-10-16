@@ -111,8 +111,12 @@ flowchart LR
      - **Parámetros:** `n_estimators`, `max_depth`, `C`, `scaler`, tamaño de train/test.
      - **Métricas:** `f1_score`, `roc_auc`, `accuracy`, `precision`, `recall`.
      - **Artefactos:** El pipeline serializado de Scikit-Learn (`model.pkl`), `conda.yaml`, `requirements.txt` y ejemplos de entrada (`input_example.json`).
-2. **Model Registry (`customer_churn_model`):**
-   - El algoritmo ganador del entrenamiento (mayor `f1_score`) se registra automáticamente como una **nueva versión** en el **MLflow Model Registry** de DagsHub (`models:/customer_churn_model/1`, `v2`, etc.).
+2. **Model Registry (`customer_churn_model`) y Etiquetas `mlops.role`:**
+   - Cada corrida en la tabla de Experimentos de MLflow y cada versión en el Model Registry recibe automáticamente el tag **`mlops.role`**:
+     - `CHAMPION` (Stage `Production`): Modelo activo en producción (se asigna en la primera versión `v1` o automáticamente al hacer merge a `main`).
+     - `CHALLENGER` (Stage `Staging`): Modelo ganador entrenado en tu entorno local o en la rama `development` / Pull Request que compite contra el Champion.
+     - `DISCARDED`: Algoritmo que perdió en el torneo de entrenamiento (ej. `Logistic_Regression` frente a `Random_Forest`).
+     - `ARCHIVED_CHAMPION` (Stage `Archived`): Modelos que fueron Champion anteriormente y quedaron reemplazados tras un nuevo despliegue a `main`.
 3. **Exportación local (`models/best_model.pkl` y `models/training_summary.json`):**
    - Adicionalmente, se guarda una copia local en `models/best_model.pkl` (para que el contenedor Docker tenga un fallback inmediato si DagsHub no responde) y un resumen estructurado en `models/training_summary.json` utilizado para la comparación de modelos en CI.
 

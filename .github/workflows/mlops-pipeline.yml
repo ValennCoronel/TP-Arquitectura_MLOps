@@ -57,6 +57,7 @@ jobs:
           MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
           MLFLOW_MODEL_URI: ${{ secrets.MLFLOW_MODEL_URI }}
+          PROMOTE_TO_CHAMPION: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
         run: |
           python -m src.train
           python -m src.compare_models

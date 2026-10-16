@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import mlflow
 import mlflow.sklearn
+from mlflow.tracking import MlflowClient
 from sklearn.datasets import make_classification
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -214,27 +215,76 @@ def train_and_track():
     print(f"[!] Mejor F1-Score: {best_f1_score:.4f} | Run ID: {best_run_id}")
     print("=" * 60)
 
-    # 3. Model URI y Registro en MLflow Model Registry (DagsHub / Servidor Central)
+    # 3. Etiquetado de Gobernanza en MLflow (CHAMPION / CHALLENGER / DISCARDED)
     model_uri = f"runs:/{best_run_id}/model"
     print(f"\n[*] Model URI del ganador: {model_uri}")
 
+    client = MlflowClient()
+    promote_env = os.getenv("PROMOTE_TO_CHAMPION", "false").lower() == "true"
+
+    # Etiquetar las corridas descartadas en el experimento
+    for r_name, r_info in all_runs_summary.items():
+        r_id = r_info["run_id"]
+        if r_id != best_run_id:
+            client.set_tag(r_id, "mlops.role", "DISCARDED")
+            client.set_tag(r_id, "mlops.tournament_result", "loser")
+            r_info["mlops_role"] = "DISCARDED"
+
     registered_version = None
+    assigned_role = "CHALLENGER"
+
     # Si hay un servidor de tracking configurado (ej. DagsHub), registramos en el Model Registry
     if tracking_uri and not tracking_uri.startswith("file:"):
         try:
             print("[*] Registrando modelo en el Model Registry de MLflow...")
             registered_model = mlflow.register_model(
                 model_uri=model_uri,
-                name="customer_churn_model"
+                name="customer_churn_model",
             )
             registered_version = str(registered_model.version)
             reg_uri = f"models:/customer_churn_model/{registered_version}"
-            print("[✓] Modelo registrado exitosamente en el Registry!")
+
+            # Si es la primera versión (v1) o estamos en el job de despliegue a main
+            is_champion = (registered_version == "1") or promote_env
+            assigned_role = "CHAMPION" if is_champion else "CHALLENGER"
+            target_stage = "Production" if is_champion else "Staging"
+
+            if is_champion:
+                # Archivar versiones previas que fueran CHAMPION
+                prev_versions = client.search_model_versions("name='customer_churn_model'")
+                for pv in prev_versions:
+                    if str(pv.version) != registered_version and pv.current_stage == "Production":
+                        client.set_model_version_tag(
+                            "customer_churn_model", str(pv.version), "mlops.role", "ARCHIVED"
+                        )
+                        if pv.run_id:
+                            client.set_tag(pv.run_id, "mlops.role", "ARCHIVED_CHAMPION")
+
+            # Etiquetar la versión en el Model Registry y transicionar su Stage
+            client.set_model_version_tag(
+                "customer_churn_model", registered_version, "mlops.role", assigned_role
+            )
+            client.transition_model_version_stage(
+                name="customer_churn_model",
+                version=registered_version,
+                stage=target_stage,
+                archive_existing_versions=is_champion,
+            )
+
+            print("[✓] Modelo registrado y etiquetado exitosamente en el Registry!")
             print("    - Nombre: 'customer_churn_model'")
-            print(f"    - Versión: {registered_version}")
+            print(f"    - Versión: {registered_version} | Stage: {target_stage}")
+            print(f"    - Tag mlops.role: {assigned_role}")
             print(f"    - Registry URI para Serving: '{reg_uri}'")
         except Exception as err:
             print(f"[!] Nota sobre Model Registry: {err}")
+    else:
+        assigned_role = "CHAMPION" if promote_env else "CHALLENGER"
+
+    # Etiquetar la corrida ganadora en la tabla de Experimentos de MLflow
+    client.set_tag(best_run_id, "mlops.role", assigned_role)
+    client.set_tag(best_run_id, "mlops.tournament_result", "winner")
+    all_runs_summary[best_model_name]["mlops_role"] = assigned_role
 
     # 4. Exportación local para serving offline, Docker y comparación en PR
     os.makedirs("models", exist_ok=True)
@@ -247,6 +297,7 @@ def train_and_track():
             "model_name": best_model_name,
             "f1_score": best_f1_score,
             "metrics": best_metrics,
+            "mlops_role": assigned_role,
         },
         export_path,
     )
@@ -259,6 +310,7 @@ def train_and_track():
                 "best_model_name": best_model_name,
                 "best_run_id": best_run_id,
                 "registered_version": registered_version,
+                "mlops_role": assigned_role,
                 "best_metrics": best_metrics,
                 "runs": all_runs_summary,
             },
