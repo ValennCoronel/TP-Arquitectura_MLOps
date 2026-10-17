@@ -1,26 +1,26 @@
 [
   {
-    "scenario": "Riesgo Alto (Churn = 1)",
+    "scenario": "Riesgo Alto (Churn = 1 -> ~68%)",
     "tenure_months": 2,
     "monthly_charges": 89.9,
     "total_charges": 179.8,
     "num_support_tickets": 6,
+    "online_security": 1
+  },
+  {
+    "scenario": "Riesgo Bajo / Menos del 35% (Churn = 0 -> ~22%)",
+    "tenure_months": 18,
+    "monthly_charges": 25.8,
+    "total_charges": 2489.36,
+    "num_support_tickets": 0,
     "online_security": 0
   },
   {
-    "scenario": "Riesgo Bajo / Cliente Fiel (Churn = 0)",
-    "tenure_months": 48,
-    "monthly_charges": 45.0,
-    "total_charges": 2160.0,
+    "scenario": "Riesgo Bajo Extremo (Churn = 0 -> ~5%)",
+    "tenure_months": 8,
+    "monthly_charges": 65.36,
+    "total_charges": 2256.12,
     "num_support_tickets": 0,
-    "online_security": 1
-  },
-  {
-    "scenario": "Caso Moderado",
-    "tenure_months": 14,
-    "monthly_charges": 65.5,
-    "total_charges": 917.0,
-    "num_support_tickets": 2,
-    "online_security": 1
+    "online_security": 0
   }
 ]
